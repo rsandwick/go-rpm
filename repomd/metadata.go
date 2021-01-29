@@ -33,12 +33,12 @@ func (md *Metadata) WriteToIndent(
 	indent string,
 ) error {
 	encoder := xml.NewEncoder(w)
+	encoder.DeepEmpty(true)
 	encoder.Indent(prefix, indent)
 	w.Write([]byte(xml.Header))
 	return encoder.EncodeNS(md, map[string]string{
 		"http://linux.duke.edu/metadata/rpm": "rpm",
 	})
-
 }
 
 type Package struct {

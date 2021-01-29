@@ -152,6 +152,15 @@ func (enc *Encoder) Indent(prefix, indent string) {
 	enc.p.indent = indent
 }
 
+// DeepEmpty sets the encoder to consider a struct empty if all its members
+// are empty. This is useful when using structs to preserve namespaces for
+// members which would otherwise have been directly included in the outer
+// struct. The performance penalty may be great for deeply-nested structs,
+// if all nested members are marked "omitempty", so it is false by default.
+func (enc *Encoder) DeepEmpty(b bool) {
+	enc.p.deepEmpty = b
+}
+
 // Encode writes the XML encoding of v to the stream.
 //
 // See the documentation for Marshal for details about the conversion
@@ -172,9 +181,9 @@ func (enc *Encoder) EncodeNS(v interface{}, ns map[string]string) error {
 	if ns == nil {
 		ns = make(map[string]string)
 	}
-	oldns := enc.p.tagPrefix
-	enc.p.tagPrefix = ns
-	defer func() { enc.p.tagPrefix = oldns }()
+	oldns := enc.p.nsPrefix
+	enc.p.nsPrefix = ns
+	defer func() { enc.p.nsPrefix = oldns }()
 	err := enc.p.marshalValue(reflect.ValueOf(v), nil, nil)
 	if err != nil {
 		return err
@@ -329,7 +338,8 @@ type printer struct {
 	attrPrefix map[string]string // map name space -> prefix
 	prefixes   []string
 	tags       []Name
-	tagPrefix  map[string]string // map name space -> prefix
+	nsPrefix   map[string]string // map name space -> prefix
+	deepEmpty  bool
 }
 
 // createAttrPrefix finds the name space prefix attribute to use for the given name space,
@@ -431,14 +441,9 @@ func (p *printer) marshalValue(val reflect.Value, finfo *fieldInfo, startTemplat
 		return nil
 	}
 
-	// Drill into interfaces and pointers.
-	// This can turn into an infinite loop given a cyclic chain,
-	// but it matches the Go 1 behavior.
-	for val.Kind() == reflect.Interface || val.Kind() == reflect.Ptr {
-		if val.IsNil() {
-			return nil
-		}
-		val = val.Elem()
+	val = resolvePtr(val)
+	if val.Kind() == reflect.Interface || val.Kind() == reflect.Ptr {
+		return nil
 	}
 
 	kind := val.Kind()
@@ -474,6 +479,13 @@ func (p *printer) marshalValue(val reflect.Value, finfo *fieldInfo, startTemplat
 			}
 		}
 		return nil
+	}
+
+	// Wait until after trying custom marshalers before omitting deeply empty structs.
+	if finfo != nil && finfo.flags&fOmitEmpty != 0 && p.deepEmpty {
+		if empty, err := isDeepEmptyValue(val); empty {
+			return err
+		}
 	}
 
 	tinfo, err := getTypeInfo(typ)
@@ -518,13 +530,19 @@ func (p *printer) marshalValue(val reflect.Value, finfo *fieldInfo, startTemplat
 	numChildren := 0
 	for i := range tinfo.fields {
 		finfo := &tinfo.fields[i]
+		fv := finfo.value(val, dontInitNilPointers)
 		if finfo.flags&fAttr == 0 {
-			if finfo.flags&fElement != 0 {
+			if finfo.flags&fOmitEmpty == 0 {
+				numChildren++
+			} else if p.deepEmpty {
+				if empty, err := isDeepEmptyValue(fv); !empty || err != nil {
+					numChildren++
+				}
+			} else if !isEmptyValue(fv) {
 				numChildren++
 			}
 			continue
 		}
-		fv := finfo.value(val, dontInitNilPointers)
 
 		if finfo.flags&fOmitEmpty != 0 && isEmptyValue(fv) {
 			continue
@@ -540,12 +558,20 @@ func (p *printer) marshalValue(val reflect.Value, finfo *fieldInfo, startTemplat
 		}
 	}
 
-	selfClosing := (numChildren == 0 && finfo.flags&fSelfClose != 0)
+	selfClosing := finfo != nil && finfo.flags&fSelfClose != 0
+	if selfClosing {
+		if val.Kind() == reflect.Struct {
+			selfClosing = (numChildren == 0)
+		} else {
+			selfClosing = isEmptyValue(val)
+		}
+	}
 
 	if selfClosing {
 		if err := p.writeSelfClosingStart(&start); err != nil {
 			return err
 		}
+		return p.cachedWriteError()
 	} else if err := p.writeStart(&start); err != nil {
 		return err
 	}
@@ -566,10 +592,8 @@ func (p *printer) marshalValue(val reflect.Value, finfo *fieldInfo, startTemplat
 		return err
 	}
 
-	if !selfClosing {
-		if err := p.writeEnd(start.Name); err != nil {
-			return err
-		}
+	if err := p.writeEnd(start.Name); err != nil {
+		return err
 	}
 
 	return p.cachedWriteError()
@@ -749,7 +773,7 @@ func (p *printer) writeStartInner(start *StartElement) error {
 
 	ns, prefix := "", ""
 	if start.Name.Space != "" {
-		if x, ok := p.tagPrefix[start.Name.Space]; ok {
+		if x, ok := p.nsPrefix[start.Name.Space]; ok {
 			ns = start.Name.Space
 			prefix = x
 			p.WriteString(prefix)
@@ -773,7 +797,7 @@ func (p *printer) writeStartInner(start *StartElement) error {
 		}
 		p.WriteByte(' ')
 		if name.Space != "" && name.Space != ns {
-			x, ok := p.tagPrefix[name.Space]
+			x, ok := p.nsPrefix[name.Space]
 			if !ok {
 				x = p.createAttrPrefix(name.Space)
 			}
@@ -806,7 +830,7 @@ func (p *printer) writeEnd(name Name) error {
 	p.writeIndent(-1)
 	p.WriteByte('<')
 	p.WriteByte('/')
-	if x, ok := p.tagPrefix[name.Space]; ok {
+	if x, ok := p.nsPrefix[name.Space]; ok {
 		p.WriteString(x)
 		p.WriteByte(':')
 	}
@@ -1120,4 +1144,43 @@ func isEmptyValue(v reflect.Value) bool {
 		return v.IsNil()
 	}
 	return false
+}
+
+func isDeepEmptyValue(v reflect.Value) (bool, error) {
+	if v.Kind() != reflect.Struct {
+		return isEmptyValue(v), nil
+	}
+	tinfo, err := getTypeInfo(v.Type())
+	if err != nil {
+		return false, err
+	}
+	for i := range tinfo.fields {
+		finfo := &tinfo.fields[i]
+		if finfo.flags&fOmitEmpty == 0 {
+			return false, nil
+		}
+		fv := resolvePtr(finfo.value(v, dontInitNilPointers))
+		if fv.Kind() != reflect.Struct {
+			if isEmptyValue(fv) {
+				continue
+			}
+		}
+		if empty, err := isDeepEmptyValue(fv); !empty || err != nil {
+			return empty, err
+		}
+	}
+	return true, nil
+}
+
+func resolvePtr(v reflect.Value) reflect.Value {
+	// Drill into interfaces and pointers.
+	// This can turn into an infinite loop given a cyclic chain,
+	// but it matches the Go 1 behavior.
+	for v.Kind() == reflect.Interface || v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			break
+		}
+		v = v.Elem()
+	}
+	return v
 }

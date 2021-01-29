@@ -7,7 +7,7 @@ import (
 type Format struct {
 	XMLName   xml.Name `xml:"format"`
 	License   string   `xml:"http://linux.duke.edu/metadata/rpm license"`
-	Vendor    string   `xml:"http://linux.duke.edu/metadata/rpm vendor"`
+	Vendor    string   `xml:"http://linux.duke.edu/metadata/rpm vendor,selfclose"`
 	Group     string   `xml:"http://linux.duke.edu/metadata/rpm group"`
 	BuildHost string   `xml:"http://linux.duke.edu/metadata/rpm buildhost"`
 	SourceRPM string   `xml:"http://linux.duke.edu/metadata/rpm sourcerpm"`
@@ -30,22 +30,22 @@ type RPMHeaderRange struct {
 
 type RPMProvides struct {
 	XMLName xml.Name   `xml:"http://linux.duke.edu/metadata/rpm provides"`
-	Entries []RPMEntry `xml:"http://linux.duke.edu/metadata/rpm entry,selfclose"`
+	Entries []RPMEntry `xml:"http://linux.duke.edu/metadata/rpm entry,omitempty,selfclose"`
 }
 
 type RPMRequires struct {
 	XMLName xml.Name   `xml:"http://linux.duke.edu/metadata/rpm requires"`
-	Entries []RPMEntry `xml:"http://linux.duke.edu/metadata/rpm entry,selfclose"`
+	Entries []RPMEntry `xml:"http://linux.duke.edu/metadata/rpm entry,omitempty,selfclose"`
 }
 
 type RPMConflicts struct {
 	XMLName xml.Name   `xml:"http://linux.duke.edu/metadata/rpm conflicts"`
-	Entries []RPMEntry `xml:"http://linux.duke.edu/metadata/rpm entry,selfclose"`
+	Entries []RPMEntry `xml:"http://linux.duke.edu/metadata/rpm entry,omitempty,selfclose"`
 }
 
 type RPMObsoletes struct {
 	XMLName xml.Name   `xml:"http://linux.duke.edu/metadata/rpm obsoletes"`
-	Entries []RPMEntry `xml:"http://linux.duke.edu/metadata/rpm entry,selfclose"`
+	Entries []RPMEntry `xml:"http://linux.duke.edu/metadata/rpm entry,omitempty,selfclose"`
 }
 
 type RPMEntry struct {
