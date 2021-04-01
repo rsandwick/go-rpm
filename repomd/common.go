@@ -14,6 +14,14 @@ type Metadata struct {
 	Packages []Package `xml:"package"`
 }
 
+func NewMetadata() *Metadata {
+	return &Metadata{
+		XMLNSRPM: "http://linux.duke.edu/metadata/rpm",
+		Count:    0,
+		Packages: make([]Package, 0),
+	}
+}
+
 func ReadMetadata(r io.Reader) (*Metadata, error) {
 	var md Metadata
 	if err := xml.NewDecoder(r).Decode(&md); err != nil {
@@ -21,6 +29,11 @@ func ReadMetadata(r io.Reader) (*Metadata, error) {
 	}
 	md.XMLNSRPM = "http://linux.duke.edu/metadata/rpm"
 	return &md, nil
+}
+
+func (md *Metadata) Add(p Package) {
+	md.Packages = append(md.Packages, p)
+	md.Count += 1
 }
 
 func (md *Metadata) WriteTo(w io.Writer) error {
@@ -73,6 +86,24 @@ type RawBytes struct {
 	Data string `xml:",innerxml"`
 }
 
+type Time struct {
+	XMLName xml.Name `xml:"time"`
+	File    int      `xml:"file,attr"`
+	Build   int      `xml:"build,attr"`
+}
+
+type Size struct {
+	XMLName   xml.Name `xml:"size"`
+	Package   int      `xml:"package,attr"`
+	Installed int      `xml:"installed,attr"`
+	Archive   int      `xml:"archive,attr"`
+}
+
+type Location struct {
+	XMLName xml.Name `xml:"location"`
+	HRef    string   `xml:"href,attr"`
+}
+
 type Checksum struct {
 	XMLName xml.Name     `xml:"checksum"`
 	Type    ChecksumType `xml:"type,attr"`
@@ -101,22 +132,4 @@ func (ct *ChecksumType) UnmarshalText(text []byte) error {
 		return fmt.Errorf("unknown checksum type: %s", string(text))
 	}
 	return nil
-}
-
-type Time struct {
-	XMLName xml.Name `xml:"time"`
-	File    int      `xml:"file,attr"`
-	Build   int      `xml:"build,attr"`
-}
-
-type Size struct {
-	XMLName   xml.Name `xml:"size"`
-	Package   int      `xml:"package,attr"`
-	Installed int      `xml:"installed,attr"`
-	Archive   int      `xml:"archive,attr"`
-}
-
-type Location struct {
-	XMLName xml.Name `xml:"location"`
-	HRef    string   `xml:"href,attr"`
 }
