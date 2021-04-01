@@ -5,10 +5,17 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"unsafe"
 )
 
-const Magic = "\xed\xab\xee\xdb"
-const HeaderMagic = "\x8e\xad\xe8"
+const (
+	HeaderMagic = "\x8e\xad\xe8"
+	Magic       = "\xed\xab\xee\xdb"
+
+	SzHeader     = int(unsafe.Sizeof(header{}))
+	SzIndexEntry = int(unsafe.Sizeof(indexEntry{}))
+	SzLead       = int(unsafe.Sizeof(lead{}))
+)
 
 var (
 	ErrBadMagic        = errors.New("bad RPM magic number")
@@ -22,7 +29,7 @@ type Head struct {
 	lead
 	Sig  *Header
 	Hdr  *Header
-	Size int64
+	Size int
 }
 
 type lead struct {
@@ -60,7 +67,7 @@ type indexEntry struct {
 	Count  int32 //uint32
 }
 
-func readHeader(r io.ReadSeeker) (*Header, error) {
+func readHeader(r io.Reader) (*Header, error) {
 	var h header
 	if err := binary.Read(r, binary.BigEndian, &h); err != nil {
 		return nil, err
@@ -147,10 +154,10 @@ func (h *Header) Get(t Tag) (interface{}, error) {
 }
 
 func (h *Header) ActualSize() int {
-	return 16 + (16 * len(h.Index)) + len(h.data)
+	return SzHeader + (SzIndexEntry * len(h.Index)) + len(h.data)
 }
 
-func ReadHead(r io.ReadSeeker) (*Head, error) {
+func ReadHead(r io.Reader) (*Head, error) {
 	var l lead
 	if err := binary.Read(r, binary.BigEndian, &l); err != nil {
 		return nil, err
@@ -169,6 +176,6 @@ func ReadHead(r io.ReadSeeker) (*Head, error) {
 		return nil, err
 	}
 
-	offs, err := r.Seek(0, io.SeekCurrent)
-	return &Head{l, sig, hdr, offs}, err
+	offs := SzLead + sig.ActualSize() + hdr.ActualSize()
+	return &Head{l, sig, hdr, offs}, nil
 }
